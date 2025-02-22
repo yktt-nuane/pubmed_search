@@ -89,8 +89,8 @@ class PubmedSearchStack(Stack):
             self,
             "DailyPubmedSearchRule",
             schedule=events.Schedule.cron(
-                minute="0",
-                hour="1",  # UTC 1:00 (日本時間 10:00)
+                minute="5",
+                hour="0",  # UTC 0:05 (日本時間 9:05)
             ),
         )
 

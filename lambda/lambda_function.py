@@ -124,9 +124,9 @@ def lambda_handler(event, context):
         # 詳細情報とアブストラクトの取得
         articles_data = fetch_article_data(pmid_list)
 
-        # ファイル名作成（タイムスタンプ付き）
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_name = f"pubmed_{search_term}_{timestamp}.json"
+        # ファイル名作成（日付のみ）
+        date_str = datetime.datetime.now().strftime("%Y%m%d")
+        file_name = f"pubmed_{search_term}_{date_str}.json"
 
         # メタデータの追加
         output_data = {
