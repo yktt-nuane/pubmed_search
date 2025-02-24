@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os
-from dotenv import load_dotenv  # python-dotenvを使用
+from dotenv import load_dotenv
 import aws_cdk as cdk
 from pubmed_search.pubmed_search_stack import PubmedSearchStack
 
@@ -8,15 +8,18 @@ from pubmed_search.pubmed_search_stack import PubmedSearchStack
 load_dotenv(override=True)
 
 # 必須環境変数のチェック
-bucket_name = os.getenv("BUCKET_NAME")
-if not bucket_name:
-    raise ValueError("BUCKET_NAME environment variable is required")
+required_env_vars = ['BUCKET_NAME', 'OPENAI_API_KEY']
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    raise ValueError(f"Required environment variables are missing: {', '.join(missing_vars)}")
 
 app = cdk.App()
 
 # コンテキストパラメータの設定
-app.node.set_context("bucket_name", bucket_name.lower())  # 確実に小文字に変換
+app.node.set_context("bucket_name", os.getenv("BUCKET_NAME").lower())
 app.node.set_context("search_term", os.getenv("SEARCH_TERM", "sepsis"))
+app.node.set_context("openai_api_key", os.getenv("OPENAI_API_KEY"))
+app.node.set_context("gpt_model", os.getenv("GPT_MODEL", "gpt-4"))
 
 PubmedSearchStack(app, "PubmedSearchStack",
     env=cdk.Environment(

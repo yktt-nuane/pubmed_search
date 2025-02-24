@@ -56,3 +56,8 @@ command.
  * `cdk docs`        open CDK documentation
 
 Enjoy!
+
+```
+./create-layer.sh
+cdk deploy
+```
