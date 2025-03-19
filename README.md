@@ -1,63 +1,84 @@
+# PubMed 文献検索・分析・翻訳パイプライン
 
-# Welcome to your CDK Python project!
+このプロジェクトは、PubMedから特定のキーワードに関連する最新の論文を自動取得し、OpenAI GPTを使用して英語で分析した後、日本語に翻訳するAWSサーバーレスパイプラインを構築します。
 
-This is a blank project for CDK development with Python.
+## 機能
 
-The `cdk.json` file tells the CDK Toolkit how to execute your app.
+- PubMedから毎日新しい論文を自動検索・取得
+- 取得した論文をOpenAI GPTを使用して分析
+- 分析結果を日本語に翻訳
+- S3への結果保存
+- Step Functionsによるワークフロー管理
 
-This project is set up like a standard Python project.  The initialization
-process also creates a virtualenv within this project, stored under the `.venv`
-directory.  To create the virtualenv it assumes that there is a `python3`
-(or `python` for Windows) executable in your path with access to the `venv`
-package. If for any reason the automatic creation of the virtualenv fails,
-you can create the virtualenv manually.
-
-To manually create a virtualenv on MacOS and Linux:
+## アーキテクチャ
 
 ```
-$ python3 -m venv .venv
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  EventBridge │───>│  Fetch      │───>│    S3       │───>│  Step       │
+│  (毎日実行)  │    │  Lambda     │    │  Bucket     │    │  Functions  │
+└─────────────┘    └─────────────┘    └─────────────┘    └──────┬──────┘
+                                                                 │
+                                               ┌─────────────────┼─────────────────┐
+                                               │                 │                 │
+                                         ┌─────▼─────┐     ┌─────▼─────┐     ┌─────▼─────┐
+                                         │  分析     │     │  翻訳     │     │  成功/失敗 │
+                                         │  Lambda   │────>│  Lambda   │────>│  状態     │
+                                         └───────────┘     └───────────┘     └───────────┘
 ```
 
-After the init process completes and the virtualenv is created, you can use the following
-step to activate your virtualenv.
+## ディレクトリ構造
 
 ```
-$ source .venv/bin/activate
+project/
+├── .env                  # 環境変数設定ファイル
+├── app.py                # CDKエントリーポイント
+├── lambda/               # 論文取得用Lambda
+│   └── lambda_function.py
+├── analyze_lambda/       # 論文分析用Lambda
+│   └── analyze_function.py
+├── translate_lambda/     # 日本語翻訳用Lambda
+│   └── translate_function.py
+├── layers/               # Lambda Layers
+│   └── openai/           # OpenAI APIクライアント用レイヤー
+├── step_functions/       # Step Functions定義
+│   └── pubmed_workflow.json
+├── pubmed_search/        # CDKスタック定義
+│   └── pubmed_search_stack.py
+└── README.md
 ```
 
-If you are a Windows platform, you would activate the virtualenv like this:
+## セットアップ方法
 
-```
-% .venv\Scripts\activate.bat
-```
+1. リポジトリをクローン
+2. 必要な依存関係をインストール:
+   ```
+   pip install -r requirements.txt
+   ```
+3. `.env.sample`を`.env`にコピーして必要な値を設定
+4. CDKのブートストラップを実行（初回のみ）:
+   ```
+   cdk bootstrap
+   ```
+5. デプロイ:
+   ```
+   cdk deploy
+   ```
 
-Once the virtualenv is activated, you can install the required dependencies.
+## 環境変数
 
-```
-$ pip install -r requirements.txt
-```
+`.env`ファイルに以下の環境変数を設定してください:
 
-At this point you can now synthesize the CloudFormation template for this code.
+- `BUCKET_NAME`: S3バケット名（グローバルで一意）
+- `SEARCH_TERM`: PubMedで検索するキーワード（デフォルト: "sepsis"）
+- `OPENAI_API_KEY`: OpenAI APIキー
+- `GPT_MODEL`: 使用するGPTモデル（デフォルト: "gpt-4"）
+- `CDK_DEFAULT_REGION`: AWS リージョン（デフォルト: "ap-northeast-1"）
 
-```
-$ cdk synth
-```
+## 仕組み
 
-To add additional dependencies, for example other CDK libraries, just add
-them to your `setup.py` file and rerun the `pip install -r requirements.txt`
-command.
-
-## Useful commands
-
- * `cdk ls`          list all stacks in the app
- * `cdk synth`       emits the synthesized CloudFormation template
- * `cdk deploy`      deploy this stack to your default AWS account/region
- * `cdk diff`        compare deployed stack with current state
- * `cdk docs`        open CDK documentation
-
-Enjoy!
-
-```
-./create-layer.sh
-cdk deploy
-```
+1. EventBridgeによって毎日定刻に論文取得Lambdaが起動
+2. 論文取得LambdaがPubMed APIから最新論文データを取得しS3に保存
+3. S3へのファイル保存をトリガーにStep Functionsワークフローが開始
+4. Step Functionsが分析Lambdaを実行し、論文を分析
+5. 続いて翻訳Lambdaが実行され、分析結果を日本語に翻訳
+6. 全てのファイルがS3バケットに保存される

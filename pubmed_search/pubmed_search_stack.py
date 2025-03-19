@@ -9,7 +9,12 @@ from aws_cdk import (
     aws_iam as iam,
     aws_events as events,
     aws_events_targets as targets,
+    aws_stepfunctions as sfn,
+    aws_stepfunctions_tasks as tasks,
+    aws_logs as logs,
 )
+import json
+import os
 from constructs import Construct
 
 class PubmedSearchStack(Stack):
@@ -92,31 +97,6 @@ class PubmedSearchStack(Stack):
             },
         )
 
-        # 分析用Lambda実行ロール
-        analyze_lambda_role = iam.Role(
-            self,
-            "PubmedAnalyzeLambdaRole",
-            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
-        )
-
-        # S3アクセス権限の追加
-        analyze_lambda_role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "s3:PutObject",
-                    "s3:GetObject",
-                ],
-                resources=[f"{bucket.bucket_arn}/*"],
-            )
-        )
-
-        # CloudWatch Logs権限の追加
-        analyze_lambda_role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name(
-                "service-role/AWSLambdaBasicExecutionRole"
-            )
-        )
-
         # OpenAIレイヤーの作成
         openai_layer = _lambda.LayerVersion(
             self,
@@ -128,6 +108,31 @@ class PubmedSearchStack(Stack):
             removal_policy=RemovalPolicy.RETAIN
         )
 
+        # 分析用Lambda実行ロール
+        lambda_role = iam.Role(
+            self,
+            "PubmedLambdaRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+        )
+
+        # S3アクセス権限の追加
+        lambda_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "s3:PutObject",
+                    "s3:GetObject",
+                ],
+                resources=[f"{bucket.bucket_arn}/*"],
+            )
+        )
+
+        # CloudWatch Logs権限の追加
+        lambda_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name(
+                "service-role/AWSLambdaBasicExecutionRole"
+            )
+        )
+
         # 分析用Lambda関数
         analyze_lambda = _lambda.Function(
             self,
@@ -135,7 +140,7 @@ class PubmedSearchStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_11,
             handler="analyze_function.lambda_handler",
             code=_lambda.Code.from_asset("analyze_lambda"),
-            role=analyze_lambda_role,
+            role=lambda_role,
             timeout=Duration.seconds(300),
             memory_size=1024,
             layers=[openai_layer],
@@ -145,10 +150,158 @@ class PubmedSearchStack(Stack):
             },
         )
 
+        # 翻訳用Lambda関数
+        translate_lambda = _lambda.Function(
+            self,
+            "PubmedTranslateFunction",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="translate_function.lambda_handler",
+            code=_lambda.Code.from_asset("translate_lambda"),
+            role=lambda_role,
+            timeout=Duration.seconds(300),
+            memory_size=1024,
+            layers=[openai_layer],
+            environment={
+                "OPENAI_API_KEY": openai_api_key,
+                "GPT_MODEL": gpt_model,
+            },
+        )
+
+        # Step Functions用ロググループ
+        log_group = logs.LogGroup(
+            self,
+            "PubmedWorkflowLogGroup",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
+        # Step Functions定義
+        # 分析タスク
+        analyze_task = tasks.LambdaInvoke(
+            self,
+            "AnalyzePapers",
+            lambda_function=analyze_lambda,
+            output_path="$.Payload",
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "bucket": bucket.bucket_name,
+                "key.$": "$.key"
+            })
+        )
+
+        # 翻訳タスク
+        translate_task = tasks.LambdaInvoke(
+            self,
+            "TranslateToPapers",
+            lambda_function=translate_lambda,
+            output_path="$.Payload",
+            retry_on_service_exceptions=True,
+            payload=sfn.TaskInput.from_object({
+                "bucket": bucket.bucket_name,
+                "output_key.$": "$.output_key"
+            })
+        )
+
+        # 失敗状態
+        fail_state = sfn.Fail(
+            self,
+            "FailState",
+            cause="Workflow execution failed",
+            error="WorkflowFailedError"
+        )
+
+        # ワークフロー定義
+        definition = analyze_task.add_catch(
+            errors=["States.ALL"],
+            result_path="$.error",
+            handler=fail_state
+        ).next(
+            translate_task.add_catch(
+                errors=["States.ALL"],
+                result_path="$.error",
+                handler=fail_state
+            )
+        )
+
+        # Step Functions ステートマシンの作成
+        state_machine = sfn.StateMachine(
+            self,
+            "PubmedWorkflow",
+            definition=definition,
+            timeout=Duration.minutes(15),
+            logs=sfn.LogOptions(
+                destination=log_group,
+                level=sfn.LogLevel.ALL,
+                include_execution_data=True
+            ),
+            tracing_enabled=True
+        )
+
+        # Lambda関数への実行権限を付与
+        analyze_lambda.grant_invoke(state_machine)
+        translate_lambda.grant_invoke(state_machine)
+
+        # S3からStep Functionsを起動するためのLambda
+        s3_trigger_lambda = _lambda.Function(
+            self,
+            "S3TriggerFunction",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="index.handler",
+            code=_lambda.Code.from_inline("""
+import json
+import boto3
+import os
+
+def handler(event, context):
+    try:
+        # S3イベントからバケットとキーを取得
+        print(f"Received event: {json.dumps(event)}")
+        bucket = event['Records'][0]['s3']['bucket']['name']
+        key = event['Records'][0]['s3']['object']['key']
+
+        # JSONファイルのみ処理
+        if not key.endswith('.json') or key.endswith('_analysis.json') or key.endswith('_jp_analysis.json'):
+            print(f"Skipping non-target file: {key}")
+            return {'statusCode': 200, 'body': 'Not a target file'}
+
+        # Step Functionsを起動
+        client = boto3.client('stepfunctions')
+        response = client.start_execution(
+            stateMachineArn=os.environ['STATE_MACHINE_ARN'],
+            input=json.dumps({
+                'bucket': bucket,
+                'key': key
+            })
+        )
+
+        return {
+            'statusCode': 200,
+            'body': f"Started execution: {response['executionArn']}"
+        }
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return {'statusCode': 500, 'body': str(e)}
+            """),
+            timeout=Duration.seconds(30),
+            environment={
+                "STATE_MACHINE_ARN": state_machine.state_machine_arn
+            }
+        )
+
+        # Step Functionsの実行権限を付与
+        state_machine.grant_start_execution(s3_trigger_lambda)
+
+        # Lambda実行ロールにCloudWatch Logs権限を追加
+        s3_trigger_lambda.role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name(
+                "service-role/AWSLambdaBasicExecutionRole"
+            )
+        )
+
         # S3イベント通知の設定
         bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(analyze_lambda),
+            s3n.LambdaDestination(s3_trigger_lambda),
             s3.NotificationKeyFilter(suffix=".json")
         )
 

@@ -134,6 +134,11 @@ def analyze_papers_with_gpt(articles_data: Dict[str, Any], max_retries: int = 3)
 def get_s3_object_from_event(event: Dict) -> Optional[tuple[str, str]]:
     """イベントからS3バケット名とキーを取得"""
     try:
+        # Step Functionsからの直接入力
+        if 'bucket' in event and 'key' in event:
+            return (event['bucket'], event['key'])
+
+        # S3イベント
         if 'Records' in event:
             record = event['Records'][0]
             if record.get('eventSource') == 'aws:s3':
@@ -141,9 +146,6 @@ def get_s3_object_from_event(event: Dict) -> Optional[tuple[str, str]]:
                     record['s3']['bucket']['name'],
                     record['s3']['object']['key']
                 )
-
-        if 'bucket' in event and 'key' in event:
-            return (event['bucket'], event['key'])
 
         return None
     except Exception as e:
@@ -159,10 +161,10 @@ def lambda_handler(event, context):
         if not s3_info:
             return {
                 "statusCode": 400,
-                "body": json.dumps({
+                "body": {
                     "error": "Invalid event structure",
                     "message": "Expected S3 event or direct bucket/key specification."
-                })
+                }
             }
 
         bucket, key = s3_info
@@ -175,10 +177,10 @@ def lambda_handler(event, context):
         if not isinstance(pubmed_data, dict) or 'articles' not in pubmed_data:
             return {
                 "statusCode": 400,
-                "body": json.dumps({
+                "body": {
                     "error": "Invalid file format",
                     "message": "Expected JSON with 'articles' field."
-                })
+                }
             }
 
         # ChatGPTによる分析
@@ -205,23 +207,20 @@ def lambda_handler(event, context):
             ContentType="application/json"
         )
 
+        # Step Functions用の出力
         return {
             "statusCode": 200,
-            "body": json.dumps({
-                "message": "Analysis completed successfully",
-                "input": f"s3://{bucket}/{key}",
-                "output": f"s3://{bucket}/{output_key}",
-                "articles_analyzed": len(pubmed_data['articles']),
-                "articles_selected": len(analysis_results)
-            })
+            "bucket": bucket,
+            "input_key": key,
+            "output_key": output_key,
+            "articles_analyzed": len(pubmed_data['articles']),
+            "articles_selected": len(analysis_results)
         }
 
     except Exception as e:
         print(f"Error: {str(e)}")
         return {
             "statusCode": 500,
-            "body": json.dumps({
-                "error": "Error processing request",
-                "details": str(e)
-            })
+            "error": "Error processing request",
+            "details": str(e)
         }
