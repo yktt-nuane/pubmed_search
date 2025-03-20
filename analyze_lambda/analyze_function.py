@@ -55,9 +55,14 @@ def get_analysis_prompt(text_for_prompt: str) -> str:
     """分析用のプロンプトを生成"""
     return f"""
 You are a medical research expert. Analyze these academic articles and:
-1) Identify the single most impactful or novel article
-2) For the selected article, provide:
-   - Why it's impactful (novelty, methodology, clinical significance, etc.)
+1) Identify the most impactful articles, prioritizing:
+   - Articles published in high-impact journals (e.g., NEJM, Lancet, JAMA, Science, Nature, Cell, etc.)
+   - Articles with groundbreaking findings or methodologies
+   - Articles with significant clinical relevance
+   - Studies with rigorous research designs (e.g., RCTs, well-designed cohort studies, systematic reviews)
+
+2) For each selected article, provide:
+   - Why it's impactful (novelty, methodology, clinical significance, journal reputation, etc.)
    - A concise summary (2-3 sentences)
    - Potential implications for clinical practice or future research
 
@@ -67,17 +72,22 @@ Articles to analyze:
 Return your analysis in JSON format with the following structure for each article:
 {{
     "pmid": string,
+    "journal": string,
+    "publication_year": string,
     "impact_reason": string,
     "summary": string,
     "implications": string
 }}
 
-Ensure all text fields are clear and concise.
+Ensure all text fields are clear and concise. Select only articles with significant impact or from reputable journals. Quality over quantity is preferred.
+
+IMPORTANT: If none of the articles meet the criteria for being impactful or from high-impact journals, return an empty array []. DO NOT select articles that lack significant impact or relevance just to provide a response.
 """
 
 def analyze_papers_with_gpt(articles_data: Dict[str, Any], max_retries: int = 3) -> List[Dict[str, Any]]:
     """
     ChatGPT APIを使用して論文を分析し、インパクトの高い論文を抽出・要約する
+    重要な論文がない場合は空のリストを返す
     """
     # 論文データをチャンクに分割
     chunks = chunk_articles(articles_data)
@@ -128,8 +138,11 @@ def analyze_papers_with_gpt(articles_data: Dict[str, Any], max_retries: int = 3)
             print(f"Error processing chunk: {str(e)}")
             continue
 
-    # 最大3つの論文を選択
-    return sorted(all_results, key=lambda x: len(x.get('impact_reason', '')), reverse=True)[:3]
+    # 空のリストでなければ、最大3つの論文を選択
+    if all_results:
+        return sorted(all_results, key=lambda x: len(x.get('impact_reason', '')), reverse=True)[:3]
+    else:
+        return []
 
 def get_s3_object_from_event(event: Dict) -> Optional[tuple[str, str]]:
     """イベントからS3バケット名とキーを取得"""

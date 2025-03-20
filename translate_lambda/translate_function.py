@@ -22,6 +22,14 @@ def get_translation_prompt(analysis_data: Dict[str, Any]) -> str:
 JSONの構造を維持し、内容のみを日本語に翻訳してください。
 医学用語は適切な日本語の専門用語に翻訳し、必要に応じて英語の原語も括弧内に残してください。
 
+各フィールドの翻訳指示:
+- pmid: 翻訳不要
+- journal: 翻訳不要（ジャーナル名はそのまま）
+- publication_year: 翻訳不要
+- impact_reason: インパクトの理由を日本語に翻訳
+- summary: 要約を日本語に翻訳
+- implications: 含意・影響を日本語に翻訳
+
 翻訳対象のJSONデータ:
 {analysis_json}
 

@@ -305,7 +305,7 @@ def handler(event, context):
             s3.NotificationKeyFilter(suffix=".json")
         )
 
-        # EventBridgeルールの作成
+        # EventBridgeルールの作成（毎日実行）
         rule = events.Rule(
             self,
             "DailyPubmedSearchRule",
@@ -317,3 +317,64 @@ def handler(event, context):
 
         # Lambda関数をターゲットとして追加
         rule.add_target(targets.LambdaFunction(fetch_lambda))
+
+        # 週次エビデンス抽出用Lambda実行ロール
+        weekly_lambda_role = iam.Role(
+            self,
+            "WeeklyEvidenceLambdaRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+        )
+
+        # S3アクセス権限の追加
+        weekly_lambda_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                ],
+                resources=[
+                    f"{bucket.bucket_arn}",
+                    f"{bucket.bucket_arn}/*"
+                ],
+            )
+        )
+
+        # CloudWatch Logs権限の追加
+        weekly_lambda_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name(
+                "service-role/AWSLambdaBasicExecutionRole"
+            )
+        )
+
+        # 週次エビデンス抽出用Lambda関数
+        weekly_evidence_lambda = _lambda.Function(
+            self,
+            "WeeklyEvidenceFunction",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="weekly_evidence_function.lambda_handler",
+            code=_lambda.Code.from_asset("weekly_evidence_lambda"),
+            role=weekly_lambda_role,
+            timeout=Duration.seconds(300),
+            memory_size=1024,
+            layers=[openai_layer],
+            environment={
+                "BUCKET_NAME": bucket_name,
+                "OPENAI_API_KEY": openai_api_key,
+                "GPT_MODEL": gpt_model,
+            },
+        )
+
+        # 週次実行用EventBridgeルール（毎週月曜日10時に実行）
+        weekly_rule = events.Rule(
+            self,
+            "WeeklyEvidenceRule",
+            schedule=events.Schedule.cron(
+                minute="0",
+                hour="1",
+                week_day="MON",
+            ),
+        )
+
+        # Lambda関数をターゲットとして追加
+        weekly_rule.add_target(targets.LambdaFunction(weekly_evidence_lambda))
