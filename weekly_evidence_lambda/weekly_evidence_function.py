@@ -5,6 +5,7 @@ from openai import OpenAI
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import re
+import tiktoken  # Import tiktoken for token counting
 
 # S3クライアント作成
 s3 = boto3.client('s3')
@@ -35,6 +36,11 @@ CQ_LIST = [
     }
 ]
 
+def num_tokens_from_string(string: str, model: str = "gpt-4") -> int:
+    """文字列のトークン数を計算"""
+    encoding = tiktoken.encoding_for_model(model)
+    return len(encoding.encode(string))
+
 def get_files_from_last_week(bucket_name: str) -> List[str]:
     """
     過去1週間分の解析済み論文ファイル（_analysis.json）を取得
@@ -64,34 +70,95 @@ def get_files_from_last_week(bucket_name: str) -> List[str]:
         print(f"Error fetching files from S3: {str(e)}")
         return []
 
+def chunk_articles(articles_data: List[Dict[str, Any]], max_tokens: int = 4000) -> List[List[Dict[str, Any]]]:
+    """論文データを適切なサイズのチャンクに分割"""
+    chunks = []
+    current_chunk = []
+    current_tokens = 0
+    
+    # 基本プロンプトのトークン数を計算（空のデータで）
+    base_prompt = create_evidence_extraction_prompt([], CQ_LIST)
+    base_prompt_tokens = num_tokens_from_string(base_prompt)
+    available_tokens = max_tokens - base_prompt_tokens
+    
+    for article in articles_data:
+        # 論文データをJSON文字列に変換してトークン数を計算
+        article_text = json.dumps(article, ensure_ascii=False)
+        article_tokens = num_tokens_from_string(article_text)
+        
+        # チャンクのトークン数が制限を超える場合、新しいチャンクを開始
+        if current_tokens + article_tokens > available_tokens and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_tokens = 0
+            
+        current_chunk.append(article)
+        current_tokens += article_tokens
+    
+    # 最後のチャンクを追加
+    if current_chunk:
+        chunks.append(current_chunk)
+        
+    return chunks
+
 def extract_evidence_articles(articles_data: List[Dict[str, Any]], cq_list: List[Dict]) -> Dict[str, List]:
     """
     GPT APIを使用して、CQに関連するエビデンス論文を抽出
     """
-    prompt = create_evidence_extraction_prompt(articles_data, cq_list)
+    # 論文を複数のチャンクに分割
+    article_chunks = chunk_articles(articles_data)
+    print(f"Split {len(articles_data)} articles into {len(article_chunks)} chunks")
+    
+    # 各CQの結果を格納する辞書
+    all_results = {cq["id"]: [] for cq in cq_list}
+    
+    # 各チャンクを処理
+    for i, chunk in enumerate(article_chunks):
+        print(f"Processing chunk {i+1}/{len(article_chunks)} with {len(chunk)} articles")
+        prompt = create_evidence_extraction_prompt(chunk, cq_list)
+        
+        # トークン数を計算して表示
+        prompt_tokens = num_tokens_from_string(prompt)
+        print(f"Chunk {i+1} prompt tokens: {prompt_tokens}")
+        
+        try:
+            # ChatGPT APIの呼び出し
+            response = client.chat.completions.create(
+                model=os.environ.get('GPT_MODEL', 'gpt-4'),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=2000
+            )
 
-    try:
-        # ChatGPT APIの呼び出し
-        response = client.chat.completions.create(
-            model=os.environ.get('GPT_MODEL', 'gpt-4'),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=2000
-        )
+            # レスポンスのパース
+            content = response.choices[0].message.content
 
-        # レスポンスのパース
-        content = response.choices[0].message.content
+            # JSONを抽出（余分なテキストがある場合の対策）
+            json_match = re.search(r'({[\s\S]*})', content)
+            if json_match:
+                content = json_match.group(1)
 
-        # JSONを抽出（余分なテキストがある場合の対策）
-        json_match = re.search(r'({[\s\S]*})', content)
-        if json_match:
-            content = json_match.group(1)
+            chunk_results = json.loads(content)
+            
+            # 各CQの結果を結合
+            for cq_id in chunk_results:
+                if cq_id in all_results and chunk_results[cq_id]:
+                    all_results[cq_id].extend(chunk_results[cq_id])
 
-        return json.loads(content)
-
-    except Exception as e:
-        print(f"Error calling OpenAI API: {str(e)}")
-        return {}
+        except Exception as e:
+            print(f"Error processing chunk {i+1}: {str(e)}")
+            continue
+    
+    # 重複を除去（PMIDをキーとして使用）
+    for cq_id in all_results:
+        if all_results[cq_id]:
+            unique_results = {}
+            for article in all_results[cq_id]:
+                if "pmid" in article:
+                    unique_results[article["pmid"]] = article
+            all_results[cq_id] = list(unique_results.values())
+    
+    return all_results
 
 def create_evidence_extraction_prompt(articles_data: List[Dict[str, Any]], cq_list: List[Dict]) -> str:
     """
