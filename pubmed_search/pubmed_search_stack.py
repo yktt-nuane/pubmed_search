@@ -357,9 +357,46 @@ def handler(event, context):
         )
 
         # 週次実行用EventBridgeルール（毎週月曜日10時に実行）
-        weekly_rule = events.Rule(
+        # セプシス用のEventBridgeルール（毎日実行）
+        sepsis_rule = events.Rule(
             self,
-            "WeeklyEvidenceRule",
+            "DailySepsisSearchRule",
+            schedule=events.Schedule.cron(
+                minute="5",
+                hour="0",  # UTC 0:05 (JST 9:05)
+            ),
+        )
+
+        # セプシス用のルールにLambda関数をターゲットとして追加
+        sepsis_rule.add_target(
+            targets.LambdaFunction(
+                fetch_lambda,
+                event=events.RuleTargetInput.from_object({"search_term": "sepsis"}),
+            )
+        )
+
+        # ARDS用のEventBridgeルール（毎日実行）
+        ards_rule = events.Rule(
+            self,
+            "DailyArdsSearchRule",
+            schedule=events.Schedule.cron(
+                minute="15",  # 10分ずらす
+                hour="0",  # UTC 0:15 (JST 9:15)
+            ),
+        )
+
+        # ARDS用のルールにLambda関数をターゲットとして追加
+        ards_rule.add_target(
+            targets.LambdaFunction(
+                fetch_lambda,
+                event=events.RuleTargetInput.from_object({"search_term": "ards"}),
+            )
+        )
+
+        # 週次エビデンス抽出用EventBridgeルール（セプシス用）
+        weekly_sepsis_rule = events.Rule(
+            self,
+            "WeeklySepsisEvidenceRule",
             schedule=events.Schedule.cron(
                 minute="0",
                 hour="1",
@@ -367,5 +404,29 @@ def handler(event, context):
             ),
         )
 
-        # Lambda関数をターゲットとして追加
-        weekly_rule.add_target(targets.LambdaFunction(weekly_evidence_lambda))
+        # セプシス用のルールにLambda関数をターゲットとして追加
+        weekly_sepsis_rule.add_target(
+            targets.LambdaFunction(
+                weekly_evidence_lambda,
+                event=events.RuleTargetInput.from_object({"search_term": "sepsis"}),
+            )
+        )
+
+        # 週次エビデンス抽出用EventBridgeルール（ARDS用）
+        weekly_ards_rule = events.Rule(
+            self,
+            "WeeklyArdsEvidenceRule",
+            schedule=events.Schedule.cron(
+                minute="15",  # 15分ずらす
+                hour="1",
+                week_day="MON",
+            ),
+        )
+
+        # ARDS用のルールにLambda関数をターゲットとして追加
+        weekly_ards_rule.add_target(
+            targets.LambdaFunction(
+                weekly_evidence_lambda,
+                event=events.RuleTargetInput.from_object({"search_term": "ards"}),
+            )
+        )

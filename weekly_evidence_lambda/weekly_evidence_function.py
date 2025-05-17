@@ -68,9 +68,10 @@ def num_tokens_from_string(string: str, model: str = "gpt-4") -> int:
     return len(encoding.encode(string))
 
 
-def get_files_from_last_week(bucket_name: str) -> List[str]:
+def get_files_from_last_week(bucket_name: str, search_term: str) -> List[str]:
     """
     過去1週間分の解析済み論文ファイル（_analysis.json）を取得
+    検索キーワードでフィルタリング
     """
     # 1週間前の日付を計算
     one_week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -89,9 +90,11 @@ def get_files_from_last_week(bucket_name: str) -> List[str]:
             if obj["Key"].endswith("_analysis.json") and not obj["Key"].endswith(
                 "_jp_analysis.json"
             ):
-                # 最終更新日が1週間以内のファイルを選択
-                if obj["LastModified"].strftime("%Y-%m-%d") >= one_week_ago:
-                    analysis_files.append(obj["Key"])
+                # 検索キーワードを含むファイルのみを対象とする
+                if search_term in obj["Key"]:
+                    # 最終更新日が1週間以内のファイルを選択
+                    if obj["LastModified"].strftime("%Y-%m-%d") >= one_week_ago:
+                        analysis_files.append(obj["Key"])
 
         return analysis_files
 
