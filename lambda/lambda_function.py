@@ -1,13 +1,15 @@
-import json
-import boto3
-import os
 import datetime
-import requests
+import json
+import os
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Optional
+from typing import Dict, List
+
+import boto3
+import requests
 
 # S3クライアント作成
-s3 = boto3.client('s3')
+s3 = boto3.client("s3")
+
 
 def fetch_article_data(pmid_list: List[str]) -> Dict:
     """
@@ -44,7 +46,7 @@ def fetch_article_data(pmid_list: List[str]) -> Dict:
 
             for elem in abstract_elems:
                 # ラベルがある場合は追加
-                label = elem.get('Label', elem.get('NlmCategory', ''))
+                label = elem.get("Label", elem.get("NlmCategory", ""))
                 text = elem.text
                 if text:
                     if label:
@@ -75,7 +77,7 @@ def fetch_article_data(pmid_list: List[str]) -> Dict:
                 "authors": authors,
                 "journal": journal,
                 "publication_year": pub_date,
-                "fetch_date": datetime.datetime.now().isoformat()
+                "fetch_date": datetime.datetime.now().isoformat(),
             }
 
         except Exception as e:
@@ -84,11 +86,12 @@ def fetch_article_data(pmid_list: List[str]) -> Dict:
 
     return articles_data
 
+
 def lambda_handler(event, context):
     try:
         # 環境変数から設定を取得
-        search_term = os.environ.get('SEARCH_TERM', 'sepsis')
-        bucket_name = os.environ.get('BUCKET_NAME', 'my-pubmed-bucket')
+        search_term = os.environ.get("SEARCH_TERM", "sepsis")
+        bucket_name = os.environ.get("BUCKET_NAME", "my-pubmed-bucket")
 
         # 前日の日付を取得
         yesterday = datetime.date.today() - datetime.timedelta(days=1)
@@ -118,7 +121,7 @@ def lambda_handler(event, context):
         if not pmid_list:
             return {
                 "statusCode": 200,
-                "body": f"No new articles found for {search_term}."
+                "body": f"No new articles found for {search_term}.",
             }
 
         # 詳細情報とアブストラクトの取得
@@ -136,10 +139,10 @@ def lambda_handler(event, context):
                 "total_articles": len(articles_data),
                 "date_range": {
                     "from": yesterday.isoformat(),
-                    "to": datetime.date.today().isoformat()
-                }
+                    "to": datetime.date.today().isoformat(),
+                },
             },
-            "articles": articles_data
+            "articles": articles_data,
         }
 
         # S3にアップロード
@@ -147,25 +150,22 @@ def lambda_handler(event, context):
             Bucket=bucket_name,
             Key=file_name,
             Body=json.dumps(output_data, ensure_ascii=False, indent=2),
-            ContentType="application/json"
+            ContentType="application/json",
         )
 
         print(f"Uploaded file to s3://{bucket_name}/{file_name}")
 
         return {
             "statusCode": 200,
-            "body": f"Successfully stored {len(articles_data)} articles with abstracts to {file_name} in {bucket_name}."
+            "body": f"Successfully stored {len(articles_data)} articles with abstracts to {file_name} in {bucket_name}.",
         }
 
     except requests.exceptions.RequestException as e:
         print(f"Error making HTTP request: {str(e)}")
         return {
             "statusCode": 500,
-            "body": f"Error fetching data from PubMed API: {str(e)}"
+            "body": f"Error fetching data from PubMed API: {str(e)}",
         }
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
-        return {
-            "statusCode": 500,
-            "body": f"Unexpected error occurred: {str(e)}"
-        }
+        return {"statusCode": 500, "body": f"Unexpected error occurred: {str(e)}"}

@@ -1,20 +1,23 @@
 import json
 import os
-import boto3
-from openai import OpenAI
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
+
+import boto3
 import tiktoken
+from openai import OpenAI
 
 # S3クライアント作成
-s3 = boto3.client('s3')
+s3 = boto3.client("s3")
 # OpenAIクライアント作成
-client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
 
 def num_tokens_from_string(string: str, model: str = "gpt-4") -> int:
     """文字列のトークン数を計算"""
     encoding = tiktoken.encoding_for_model(model)
     return len(encoding.encode(string))
+
 
 def create_article_text(article: Dict[str, Any], pmid: str) -> str:
     """1つの論文データからテキストを生成"""
@@ -25,6 +28,7 @@ def create_article_text(article: Dict[str, Any], pmid: str) -> str:
         f"Journal: {article['journal']}\n"
         f"Year: {article['publication_year']}\n\n"
     )
+
 
 def chunk_articles(articles: Dict[str, Any], max_tokens: int = 4000) -> List[Dict[str, Any]]:
     """論文データを適切なサイズのチャンクに分割"""
@@ -50,6 +54,7 @@ def chunk_articles(articles: Dict[str, Any], max_tokens: int = 4000) -> List[Dic
         chunks.append(current_chunk)
 
     return chunks
+
 
 def get_analysis_prompt(text_for_prompt: str) -> str:
     """分析用のプロンプトを生成"""
@@ -84,7 +89,10 @@ Ensure all text fields are clear and concise. Select only articles with signific
 IMPORTANT: If none of the articles meet the criteria for being impactful or from high-impact journals, return an empty array []. DO NOT select articles that lack significant impact or relevance just to provide a response.
 """
 
-def analyze_papers_with_gpt(articles_data: Dict[str, Any], max_retries: int = 3) -> List[Dict[str, Any]]:
+
+def analyze_papers_with_gpt(
+    articles_data: Dict[str, Any], max_retries: int = 3
+) -> List[Dict[str, Any]]:
     """
     ChatGPT APIを使用して論文を分析し、インパクトの高い論文を抽出・要約する
     重要な論文がない場合は空のリストを返す
@@ -114,10 +122,10 @@ def analyze_papers_with_gpt(articles_data: Dict[str, Any], max_retries: int = 3)
             for retry in range(max_retries):
                 try:
                     response = client.chat.completions.create(
-                        model=os.environ.get('GPT_MODEL', 'gpt-4'),
+                        model=os.environ.get("GPT_MODEL", "gpt-4"),
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.2,
-                        max_tokens=1000
+                        max_tokens=1000,
                     )
                     break
                 except Exception as e:
@@ -140,30 +148,29 @@ def analyze_papers_with_gpt(articles_data: Dict[str, Any], max_retries: int = 3)
 
     # 空のリストでなければ、最大3つの論文を選択
     if all_results:
-        return sorted(all_results, key=lambda x: len(x.get('impact_reason', '')), reverse=True)[:3]
+        return sorted(all_results, key=lambda x: len(x.get("impact_reason", "")), reverse=True)[:3]
     else:
         return []
+
 
 def get_s3_object_from_event(event: Dict) -> Optional[tuple[str, str]]:
     """イベントからS3バケット名とキーを取得"""
     try:
         # Step Functionsからの直接入力
-        if 'bucket' in event and 'key' in event:
-            return (event['bucket'], event['key'])
+        if "bucket" in event and "key" in event:
+            return (event["bucket"], event["key"])
 
         # S3イベント
-        if 'Records' in event:
-            record = event['Records'][0]
-            if record.get('eventSource') == 'aws:s3':
-                return (
-                    record['s3']['bucket']['name'],
-                    record['s3']['object']['key']
-                )
+        if "Records" in event:
+            record = event["Records"][0]
+            if record.get("eventSource") == "aws:s3":
+                return (record["s3"]["bucket"]["name"], record["s3"]["object"]["key"])
 
         return None
     except Exception as e:
         print(f"Error parsing event: {str(e)}")
         return None
+
 
 def lambda_handler(event, context):
     try:
@@ -176,8 +183,8 @@ def lambda_handler(event, context):
                 "statusCode": 400,
                 "body": {
                     "error": "Invalid event structure",
-                    "message": "Expected S3 event or direct bucket/key specification."
-                }
+                    "message": "Expected S3 event or direct bucket/key specification.",
+                },
             }
 
         bucket, key = s3_info
@@ -185,39 +192,39 @@ def lambda_handler(event, context):
 
         # S3から論文データを取得
         response = s3.get_object(Bucket=bucket, Key=key)
-        pubmed_data = json.loads(response['Body'].read().decode('utf-8'))
+        pubmed_data = json.loads(response["Body"].read().decode("utf-8"))
 
-        if not isinstance(pubmed_data, dict) or 'articles' not in pubmed_data:
+        if not isinstance(pubmed_data, dict) or "articles" not in pubmed_data:
             return {
                 "statusCode": 400,
                 "body": {
                     "error": "Invalid file format",
-                    "message": "Expected JSON with 'articles' field."
-                }
+                    "message": "Expected JSON with 'articles' field.",
+                },
             }
 
         # ChatGPTによる分析
-        analysis_results = analyze_papers_with_gpt(pubmed_data['articles'])
+        analysis_results = analyze_papers_with_gpt(pubmed_data["articles"])
 
         # 出力JSONの作成
         output_json = {
             "metadata": {
                 "original_file": f"s3://{bucket}/{key}",
                 "analysis_date": datetime.now().isoformat(),
-                "search_term": pubmed_data.get('metadata', {}).get('search_term', 'unknown'),
-                "total_analyzed": len(pubmed_data['articles']),
-                "total_selected": len(analysis_results)
+                "search_term": pubmed_data.get("metadata", {}).get("search_term", "unknown"),
+                "total_analyzed": len(pubmed_data["articles"]),
+                "total_selected": len(analysis_results),
             },
-            "impactful_articles": analysis_results
+            "impactful_articles": analysis_results,
         }
 
         # 分析結果をS3に保存
-        output_key = key.replace('.json', '_analysis.json')
+        output_key = key.replace(".json", "_analysis.json")
         s3.put_object(
             Bucket=bucket,
             Key=output_key,
             Body=json.dumps(output_json, ensure_ascii=False, indent=2),
-            ContentType="application/json"
+            ContentType="application/json",
         )
 
         # Step Functions用の出力
@@ -226,8 +233,8 @@ def lambda_handler(event, context):
             "bucket": bucket,
             "input_key": key,
             "output_key": output_key,
-            "articles_analyzed": len(pubmed_data['articles']),
-            "articles_selected": len(analysis_results)
+            "articles_analyzed": len(pubmed_data["articles"]),
+            "articles_selected": len(analysis_results),
         }
 
     except Exception as e:
@@ -235,5 +242,5 @@ def lambda_handler(event, context):
         return {
             "statusCode": 500,
             "error": "Error processing request",
-            "details": str(e)
+            "details": str(e),
         }

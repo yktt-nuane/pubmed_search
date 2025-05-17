@@ -1,21 +1,15 @@
-from aws_cdk import (
-    Stack,
-    Duration,
-    RemovalPolicy,
-    SecretValue,
-    aws_lambda as _lambda,
-    aws_s3 as s3,
-    aws_s3_notifications as s3n,
-    aws_iam as iam,
-    aws_events as events,
-    aws_events_targets as targets,
-    aws_stepfunctions as sfn,
-    aws_stepfunctions_tasks as tasks,
-    aws_logs as logs,
-)
-import json
-import os
+from aws_cdk import Duration, RemovalPolicy, Stack
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as targets
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as _lambda
+from aws_cdk import aws_logs as logs
+from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_s3_notifications as s3n
+from aws_cdk import aws_stepfunctions as sfn
+from aws_cdk import aws_stepfunctions_tasks as tasks
 from constructs import Construct
+
 
 class PubmedSearchStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -41,18 +35,18 @@ class PubmedSearchStack(Stack):
                     transitions=[
                         s3.Transition(
                             storage_class=s3.StorageClass.INFREQUENT_ACCESS,
-                            transition_after=Duration.days(90)
+                            transition_after=Duration.days(90),
                         )
                     ]
                 )
-            ]
+            ],
         )
 
         # 論文取得用Lambda（既存）の実装
         request_layer = _lambda.LayerVersion.from_layer_version_arn(
             self,
             "RequestLayer",
-            "arn:aws:lambda:ap-northeast-1:438774532845:layer:request_layer:2"
+            "arn:aws:lambda:ap-northeast-1:438774532845:layer:request_layer:2",
         )
 
         # 論文取得用Lambda実行ロール
@@ -105,7 +99,7 @@ class PubmedSearchStack(Stack):
             compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
             description="OpenAI Python package layer for ChatGPT integration",
             compatible_architectures=[_lambda.Architecture.X86_64],
-            removal_policy=RemovalPolicy.RETAIN
+            removal_policy=RemovalPolicy.RETAIN,
         )
 
         # 分析用Lambda実行ロール
@@ -172,7 +166,7 @@ class PubmedSearchStack(Stack):
             self,
             "PubmedWorkflowLogGroup",
             retention=logs.RetentionDays.ONE_MONTH,
-            removal_policy=RemovalPolicy.DESTROY
+            removal_policy=RemovalPolicy.DESTROY,
         )
 
         # Step Functions定義
@@ -183,10 +177,7 @@ class PubmedSearchStack(Stack):
             lambda_function=analyze_lambda,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            payload=sfn.TaskInput.from_object({
-                "bucket": bucket.bucket_name,
-                "key.$": "$.key"
-            })
+            payload=sfn.TaskInput.from_object({"bucket": bucket.bucket_name, "key.$": "$.key"}),
         )
 
         # 翻訳タスク
@@ -196,10 +187,9 @@ class PubmedSearchStack(Stack):
             lambda_function=translate_lambda,
             output_path="$.Payload",
             retry_on_service_exceptions=True,
-            payload=sfn.TaskInput.from_object({
-                "bucket": bucket.bucket_name,
-                "output_key.$": "$.output_key"
-            })
+            payload=sfn.TaskInput.from_object(
+                {"bucket": bucket.bucket_name, "output_key.$": "$.output_key"}
+            ),
         )
 
         # 失敗状態
@@ -207,19 +197,15 @@ class PubmedSearchStack(Stack):
             self,
             "FailState",
             cause="Workflow execution failed",
-            error="WorkflowFailedError"
+            error="WorkflowFailedError",
         )
 
         # ワークフロー定義
         definition = analyze_task.add_catch(
-            errors=["States.ALL"],
-            result_path="$.error",
-            handler=fail_state
+            errors=["States.ALL"], result_path="$.error", handler=fail_state
         ).next(
             translate_task.add_catch(
-                errors=["States.ALL"],
-                result_path="$.error",
-                handler=fail_state
+                errors=["States.ALL"], result_path="$.error", handler=fail_state
             )
         )
 
@@ -232,14 +218,28 @@ class PubmedSearchStack(Stack):
             logs=sfn.LogOptions(
                 destination=log_group,
                 level=sfn.LogLevel.ALL,
-                include_execution_data=True
+                include_execution_data=True,
             ),
-            tracing_enabled=True
+            tracing_enabled=True,
         )
 
         # Lambda関数への実行権限を付与
         analyze_lambda.grant_invoke(state_machine)
         translate_lambda.grant_invoke(state_machine)
+
+        # S3トリガー用のLambdaロールを先に作成
+        s3_trigger_lambda_role = iam.Role(
+            self,
+            "S3TriggerLambdaRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+        )
+
+        # CloudWatch Logs権限の追加
+        s3_trigger_lambda_role.add_managed_policy(
+            iam.ManagedPolicy.from_aws_managed_policy_name(
+                "service-role/AWSLambdaBasicExecutionRole"
+            )
+        )
 
         # S3からStep Functionsを起動するためのLambda
         s3_trigger_lambda = _lambda.Function(
@@ -247,7 +247,8 @@ class PubmedSearchStack(Stack):
             "S3TriggerFunction",
             runtime=_lambda.Runtime.PYTHON_3_11,
             handler="index.handler",
-            code=_lambda.Code.from_inline("""
+            code=_lambda.Code.from_inline(
+                """
 import json
 import boto3
 import os
@@ -281,28 +282,21 @@ def handler(event, context):
     except Exception as e:
         print(f"Error: {str(e)}")
         return {'statusCode': 500, 'body': str(e)}
-            """),
+            """
+            ),
             timeout=Duration.seconds(30),
-            environment={
-                "STATE_MACHINE_ARN": state_machine.state_machine_arn
-            }
+            role=s3_trigger_lambda_role,  # ここで先に作成したロールを指定
+            environment={"STATE_MACHINE_ARN": state_machine.state_machine_arn},
         )
 
         # Step Functionsの実行権限を付与
         state_machine.grant_start_execution(s3_trigger_lambda)
 
-        # Lambda実行ロールにCloudWatch Logs権限を追加
-        s3_trigger_lambda.role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name(
-                "service-role/AWSLambdaBasicExecutionRole"
-            )
-        )
-
         # S3イベント通知の設定
         bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(s3_trigger_lambda),
-            s3.NotificationKeyFilter(suffix=".json")
+            s3.NotificationKeyFilter(suffix=".json"),
         )
 
         # EventBridgeルールの作成（毎日実行）
@@ -333,10 +327,7 @@ def handler(event, context):
                     "s3:GetObject",
                     "s3:ListBucket",
                 ],
-                resources=[
-                    f"{bucket.bucket_arn}",
-                    f"{bucket.bucket_arn}/*"
-                ],
+                resources=[f"{bucket.bucket_arn}", f"{bucket.bucket_arn}/*"],
             )
         )
 

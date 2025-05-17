@@ -1,14 +1,16 @@
 import json
 import os
+from datetime import datetime
+from typing import Any, Dict
+
 import boto3
 from openai import OpenAI
-from datetime import datetime
-from typing import Dict, List, Any, Optional
 
 # S3クライアント作成
-s3 = boto3.client('s3')
+s3 = boto3.client("s3")
 # OpenAIクライアント作成
-client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
 
 def get_translation_prompt(analysis_data: Dict[str, Any]) -> str:
     """
@@ -36,42 +38,45 @@ JSONの構造を維持し、内容のみを日本語に翻訳してください�
 JSON形式で返答してください。キー名は英語のまま維持し、値のみを日本語に翻訳してください。
 """
 
+
 def lambda_handler(event, context):
     try:
         print(f"Received event: {json.dumps(event)}")
 
         # Step Functionsからのパラメータ取得
-        bucket = event.get('bucket')
-        input_key = event.get('output_key')
+        bucket = event.get("bucket")
+        input_key = event.get("output_key")
 
         # 直接S3イベントからの場合も対応
-        if 'Records' in event:
-            bucket = event['Records'][0]['s3']['bucket']['name']
-            input_key = event['Records'][0]['s3']['object']['key']
+        if "Records" in event:
+            bucket = event["Records"][0]["s3"]["bucket"]["name"]
+            input_key = event["Records"][0]["s3"]["object"]["key"]
 
         if not bucket or not input_key:
             return {
                 "statusCode": 400,
-                "body": json.dumps({
-                    "error": "Missing required parameters",
-                    "message": "Both 'bucket' and 'output_key' are required."
-                })
+                "body": json.dumps(
+                    {
+                        "error": "Missing required parameters",
+                        "message": "Both 'bucket' and 'output_key' are required.",
+                    }
+                ),
             }
 
         print(f"Processing s3://{bucket}/{input_key}")
 
         # S3から分析済み論文データを取得
         response = s3.get_object(Bucket=bucket, Key=input_key)
-        analysis_data = json.loads(response['Body'].read().decode('utf-8'))
+        analysis_data = json.loads(response["Body"].read().decode("utf-8"))
 
         # ChatGPTによる翻訳
         prompt = get_translation_prompt(analysis_data)
 
         response = client.chat.completions.create(
-            model=os.environ.get('GPT_MODEL', 'gpt-4'),
+            model=os.environ.get("GPT_MODEL", "gpt-4"),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=2000
+            max_tokens=2000,
         )
 
         # レスポンスのパース
@@ -79,25 +84,26 @@ def lambda_handler(event, context):
 
         # JSONを抽出（余分なテキストがある場合の対策）
         import re
-        json_match = re.search(r'({[\s\S]*})', content)
+
+        json_match = re.search(r"({[\s\S]*})", content)
         if json_match:
             content = json_match.group(1)
 
         translated_data = json.loads(content)
 
         # 元データのメタデータを拡張
-        if 'metadata' in translated_data:
-            translated_data['metadata']['translation_date'] = datetime.now().isoformat()
-            translated_data['metadata']['original_language'] = 'en'
-            translated_data['metadata']['target_language'] = 'ja'
+        if "metadata" in translated_data:
+            translated_data["metadata"]["translation_date"] = datetime.now().isoformat()
+            translated_data["metadata"]["original_language"] = "en"
+            translated_data["metadata"]["target_language"] = "ja"
 
         # 翻訳結果をS3に保存
-        output_key = input_key.replace('_analysis.json', '_jp_analysis.json')
+        output_key = input_key.replace("_analysis.json", "_jp_analysis.json")
         s3.put_object(
             Bucket=bucket,
             Key=output_key,
             Body=json.dumps(translated_data, ensure_ascii=False, indent=2),
-            ContentType="application/json"
+            ContentType="application/json",
         )
 
         return {
@@ -105,7 +111,7 @@ def lambda_handler(event, context):
             "bucket": bucket,
             "input_key": input_key,
             "output_key": output_key,
-            "message": "Translation completed successfully"
+            "message": "Translation completed successfully",
         }
 
     except Exception as e:
@@ -113,5 +119,5 @@ def lambda_handler(event, context):
         return {
             "statusCode": 500,
             "error": "Error processing request",
-            "details": str(e)
+            "details": str(e),
         }
