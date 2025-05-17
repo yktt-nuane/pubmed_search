@@ -1,0 +1,13 @@
+{
+    "name": "shiftmaking-v1-aws",
+    "version": "1.0.0",
+    "description": "Medical staff shift scheduling system",
+    "scripts": {
+        "prepare": "husky install",
+        "lint": "ruff check . && ruff format --check . && mypy .",
+        "test": "pytest"
+    },
+    "devDependencies": {
+        "husky": "^8.0.3"
+    }
+}

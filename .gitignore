@@ -1,15 +1,88 @@
-*.swp
-package-lock.json
-__pycache__
-.pytest_cache
-.venv
-*.egg-info
+# Python関連
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
-# CDK asset staging directory
+# Node.js関連
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+.pnp/
+.pnp.js
+package-lock.json
+yarn.lock
+
+# 仮想環境
+.venv
+venv/
+ENV/
+env/
+
+# AWS CDK関連
 .cdk.staging
 cdk.out
+cdk.context.json
+.aws-sam/
 
+# 環境変数とシークレット
 .env
-*.json
+.env.*
+*.pem
+*.key
 
-layers/*
+# エディタ/IDE関連
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.classpath
+.settings/
+
+# ログと一時ファイル
+*.log
+logs/
+tmp/
+.tmp/
+
+# 生成されたファイル
+/layers/*
+.mypy_cache/
+
+# プロジェクト固有のファイル
+output/
+generated-*.json
+pubmed_*_*.json
+weekly_evidence_*.json
+
+# 例外：設定ファイルは保持
+!cdk.json
+!package.json
+!jest.config.js
+!tsconfig.json
+!requirements*.txt
