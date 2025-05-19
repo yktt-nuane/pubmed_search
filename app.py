@@ -13,7 +13,9 @@ load_dotenv(override=True)
 required_env_vars = ["BUCKET_NAME", "OPENAI_API_KEY"]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 if missing_vars:
-    raise ValueError(f"Required environment variables are missing: {', '.join(missing_vars)}")
+    raise ValueError(
+        f"Required environment variables are missing: {', '.join(missing_vars)}"
+    )
 
 app = cdk.App()
 
@@ -25,6 +27,7 @@ assert bucket_name is not None, "BUCKET_NAME should not be None at this point"
 # コンテキストパラメータの設定
 app.node.set_context("bucket_name", bucket_name.lower())
 app.node.set_context("search_term", os.getenv("SEARCH_TERM", "sepsis"))
+app.node.set_context("search_terms", os.getenv("SEARCH_TERMS", "sepsis,ards"))
 app.node.set_context("openai_api_key", os.getenv("OPENAI_API_KEY"))
 app.node.set_context("gpt_model", os.getenv("GPT_MODEL", "gpt-4"))
 

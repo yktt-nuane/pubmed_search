@@ -90,74 +90,99 @@ def fetch_article_data(pmid_list: List[str]) -> Dict:
 def lambda_handler(event, context):
     try:
         # 環境変数から設定を取得
-        search_term = os.environ.get("SEARCH_TERM", "sepsis")
+        search_terms_str = os.environ.get("SEARCH_TERMS", "sepsis")
+        search_terms = [term.strip() for term in search_terms_str.split(",")]
         bucket_name = os.environ.get("BUCKET_NAME", "my-pubmed-bucket")
+
+        # イベントから特定の検索語が指定されているか確認
+        if "search_term" in event:
+            search_terms = [event["search_term"]]
+            print(f"Using search term from event: {search_terms[0]}")
+
+        results = []
 
         # 前日の日付を取得
         yesterday = datetime.date.today() - datetime.timedelta(days=1)
 
-        # ESearch APIのURL作成
-        esearch_url = (
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-            "?db=pubmed"
-            f"&term={search_term}"
-            "&retmode=json"
-            "&retmax=1000"
-            f"&datetype=edat"
-            f"&mindate={yesterday.strftime('%Y/%m/%d')}"
-            f"&maxdate={datetime.date.today().strftime('%Y/%m/%d')}"
-        )
+        for search_term in search_terms:
+            # ESearch APIのURL作成
+            esearch_url = (
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+                "?db=pubmed"
+                f"&term={search_term}"
+                "&retmode=json"
+                "&retmax=1000"
+                f"&datetype=edat"
+                f"&mindate={yesterday.strftime('%Y/%m/%d')}"
+                f"&maxdate={datetime.date.today().strftime('%Y/%m/%d')}"
+            )
 
-        print(f"Searching PubMed with URL: {esearch_url}")
+            print(f"Searching PubMed with URL: {esearch_url}")
 
-        # ESearch APIリクエスト
-        response = requests.get(esearch_url)
-        response.raise_for_status()
-        data = response.json()
-        pmid_list = data.get("esearchresult", {}).get("idlist", [])
+            # ESearch APIリクエスト
+            response = requests.get(esearch_url)
+            response.raise_for_status()
+            data = response.json()
+            pmid_list = data.get("esearchresult", {}).get("idlist", [])
 
-        print(f"Found {len(pmid_list)} articles.")
+            print(f"Found {len(pmid_list)} articles for term '{search_term}'.")
 
-        if not pmid_list:
-            return {
-                "statusCode": 200,
-                "body": f"No new articles found for {search_term}.",
+            if not pmid_list:
+                print(f"No new articles found for {search_term}.")
+                continue
+
+            # 詳細情報とアブストラクトの取得
+            articles_data = fetch_article_data(pmid_list)
+
+            # ファイル名作成（検索語と日付）
+            date_str = datetime.datetime.now().strftime("%Y%m%d")
+            # ファイル名に使用できる形式に検索語を変換（空白をアンダースコアに置換など）
+            safe_term = search_term.replace(" ", "_").replace("/", "_").replace("\\", "_")
+            file_name = f"pubmed_{safe_term}_{date_str}.json"
+
+            # メタデータの追加
+            output_data = {
+                "metadata": {
+                    "search_term": search_term,
+                    "search_date": datetime.datetime.now().isoformat(),
+                    "total_articles": len(articles_data),
+                    "date_range": {
+                        "from": yesterday.isoformat(),
+                        "to": datetime.date.today().isoformat(),
+                    },
+                },
+                "articles": articles_data,
             }
 
-        # 詳細情報とアブストラクトの取得
-        articles_data = fetch_article_data(pmid_list)
+            # S3にアップロード
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=file_name,
+                Body=json.dumps(output_data, ensure_ascii=False, indent=2),
+                ContentType="application/json",
+            )
 
-        # ファイル名作成（日付のみ）
-        date_str = datetime.datetime.now().strftime("%Y%m%d")
-        file_name = f"pubmed_{search_term}_{date_str}.json"
+            print(f"Uploaded file to s3://{bucket_name}/{file_name}")
 
-        # メタデータの追加
-        output_data = {
-            "metadata": {
-                "search_term": search_term,
-                "search_date": datetime.datetime.now().isoformat(),
-                "total_articles": len(articles_data),
-                "date_range": {
-                    "from": yesterday.isoformat(),
-                    "to": datetime.date.today().isoformat(),
-                },
-            },
-            "articles": articles_data,
-        }
+            # 結果を記録
+            results.append(
+                {
+                    "search_term": search_term,
+                    "articles_count": len(articles_data),
+                    "file_name": file_name,
+                }
+            )
 
-        # S3にアップロード
-        s3.put_object(
-            Bucket=bucket_name,
-            Key=file_name,
-            Body=json.dumps(output_data, ensure_ascii=False, indent=2),
-            ContentType="application/json",
-        )
-
-        print(f"Uploaded file to s3://{bucket_name}/{file_name}")
+        if not results:
+            return {
+                "statusCode": 200,
+                "body": "No new articles found for any search terms.",
+            }
 
         return {
             "statusCode": 200,
-            "body": f"Successfully stored {len(articles_data)} articles with abstracts to {file_name} in {bucket_name}.",
+            "body": f"Successfully processed {len(results)} search terms and stored results to S3.",
+            "results": results,
         }
 
     except requests.exceptions.RequestException as e:

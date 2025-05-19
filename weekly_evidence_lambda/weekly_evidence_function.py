@@ -61,6 +61,43 @@ CQ_LIST = [
     },
 ]
 
+# ARDS用CQのリスト
+ARDS_CQ_LIST = [
+    {
+        "id": "ARDS-CQ1",
+        "question": "ARDSに対して，肺保護換気戦略を行うか?",
+        "keywords": [
+            "lung protective ventilation",
+            "low tidal volume",
+            "protective ventilation",
+            "肺保護換気",
+            "低一回換気量",
+        ],
+    },
+    {
+        "id": "ARDS-CQ2",
+        "question": "ARDSに対して，腹臥位換気を行うか?",
+        "keywords": [
+            "prone position",
+            "prone positioning",
+            "proning",
+            "腹臥位",
+            "腹臥位換気",
+        ],
+    },
+    {
+        "id": "ARDS-CQ3",
+        "question": "ARDSに対して，ECMO療法を行うか?",
+        "keywords": [
+            "ECMO",
+            "extracorporeal membrane oxygenation",
+            "extracorporeal life support",
+            "ECLS",
+            "体外式膜型人工肺",
+        ],
+    },
+]
+
 
 def num_tokens_from_string(string: str, model: str = "gpt-4") -> int:
     """文字列のトークン数を計算"""
@@ -68,10 +105,10 @@ def num_tokens_from_string(string: str, model: str = "gpt-4") -> int:
     return len(encoding.encode(string))
 
 
-def get_files_from_last_week(bucket_name: str, search_term: str) -> List[str]:
+def get_files_from_last_week(bucket_name: str, search_term: str = None) -> List[str]:
     """
     過去1週間分の解析済み論文ファイル（_analysis.json）を取得
-    検索キーワードでフィルタリング
+    search_termが指定されている場合は、その検索語に関連するファイルのみ返す
     """
     # 1週間前の日付を計算
     one_week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -90,10 +127,21 @@ def get_files_from_last_week(bucket_name: str, search_term: str) -> List[str]:
             if obj["Key"].endswith("_analysis.json") and not obj["Key"].endswith(
                 "_jp_analysis.json"
             ):
-                # 検索キーワードを含むファイルのみを対象とする
-                if search_term in obj["Key"]:
-                    # 最終更新日が1週間以内のファイルを選択
-                    if obj["LastModified"].strftime("%Y-%m-%d") >= one_week_ago:
+                # 最終更新日が1週間以内のファイルを選択
+                if obj["LastModified"].strftime("%Y-%m-%d") >= one_week_ago:
+                    # 検索語が指定されている場合、ファイル名に検索語が含まれているかチェック
+                    if search_term:
+                        # ファイル名を検査
+                        # 例: pubmed_sepsis_20250319_analysis.json や pubmed_ards_20250319_analysis.json
+                        safe_term = (
+                            search_term.lower()
+                            .replace(" ", "_")
+                            .replace("/", "_")
+                            .replace("\\", "_")
+                        )
+                        if f"pubmed_{safe_term}_" in obj["Key"].lower():
+                            analysis_files.append(obj["Key"])
+                    else:
                         analysis_files.append(obj["Key"])
 
         return analysis_files
@@ -246,6 +294,16 @@ def create_evidence_extraction_prompt(
 """
 
 
+def get_appropriate_cq_list(search_term: str) -> List[Dict]:
+    """
+    検索語に基づいて適切なCQリストを返す
+    """
+    if search_term and search_term.lower() == "ards":
+        return ARDS_CQ_LIST
+    else:
+        return CQ_LIST  # デフォルトはセプシス用CQリスト
+
+
 def lambda_handler(event, context):
     try:
         print(f"Weekly evidence extraction started at {datetime.now().isoformat()}")
@@ -255,9 +313,21 @@ def lambda_handler(event, context):
         if not bucket_name:
             raise ValueError("BUCKET_NAME environment variable is not set")
 
-        # 過去1週間の解析済みファイルを取得
-        analysis_files = get_files_from_last_week(bucket_name)
-        print(f"Found {len(analysis_files)} analysis files from last week")
+        # イベントから検索語を取得（指定されていない場合はデフォルトの"sepsis"を使用）
+        search_term = None
+        if event and isinstance(event, dict) and "search_term" in event:
+            search_term = event["search_term"]
+            print(f"Using search term from event: {search_term}")
+
+        # 適切なCQリストを取得
+        cq_list = get_appropriate_cq_list(search_term)
+        print(f"Using CQ list for: {search_term or 'sepsis'} with {len(cq_list)} CQs")
+
+        # 過去1週間の解析済みファイルを取得（検索語に基づいてフィルタリング）
+        analysis_files = get_files_from_last_week(bucket_name, search_term)
+        print(
+            f"Found {len(analysis_files)} analysis files from last week for term: {search_term or 'all terms'}"
+        )
 
         if not analysis_files:
             print("No files to process. Exiting.")
@@ -284,7 +354,7 @@ def lambda_handler(event, context):
             return {"statusCode": 200, "message": "No articles found"}
 
         # CQに関連するエビデンス論文を抽出
-        evidence_results = extract_evidence_articles(all_articles, CQ_LIST)
+        evidence_results = extract_evidence_articles(all_articles, cq_list)
 
         # 結果にエビデンスがあるか確認
         has_evidence = False
@@ -303,15 +373,22 @@ def lambda_handler(event, context):
                 "generated_date": datetime.now().isoformat(),
                 "period_start": (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
                 "period_end": datetime.now().strftime("%Y-%m-%d"),
+                "search_term": search_term or "sepsis",
                 "files_analyzed": len(analysis_files),
                 "articles_analyzed": len(all_articles),
             },
             "evidence_articles": evidence_results,
         }
 
-        # 結果をS3に保存
+        # 結果をS3に保存（検索語をファイル名に含める）
         date_str = datetime.now().strftime("%Y%m%d")
-        output_key = f"weekly_evidence_{date_str}.json"
+        # ファイル名に使用できる形式に検索語を変換
+        safe_term = ""
+        if search_term:
+            safe_term = search_term.lower().replace(" ", "_").replace("/", "_").replace("\\", "_")
+            output_key = f"weekly_evidence_{safe_term}_{date_str}.json"
+        else:
+            output_key = f"weekly_evidence_{date_str}.json"
 
         s3.put_object(
             Bucket=bucket_name,
@@ -325,6 +402,7 @@ def lambda_handler(event, context):
         return {
             "statusCode": 200,
             "message": "Weekly evidence extraction completed successfully",
+            "search_term": search_term or "sepsis",
             "output_file": output_key,
         }
 

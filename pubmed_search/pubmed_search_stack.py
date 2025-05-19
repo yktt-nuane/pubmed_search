@@ -17,9 +17,10 @@ class PubmedSearchStack(Stack):
 
         # コンテキストから値を取得
         bucket_name = self.node.try_get_context("bucket_name")
-        search_term = self.node.try_get_context("search_term")
         openai_api_key = self.node.try_get_context("openai_api_key")
         gpt_model = self.node.try_get_context("gpt_model")
+        search_terms_str = self.node.try_get_context("search_terms") or "sepsis,ards"
+        search_terms = [term.strip() for term in search_terms_str.split(",")]
 
         # S3バケットの作成
         bucket = s3.Bucket(
@@ -87,7 +88,7 @@ class PubmedSearchStack(Stack):
             layers=[request_layer],
             environment={
                 "BUCKET_NAME": bucket_name,
-                "SEARCH_TERM": search_term,
+                "SEARCH_TERMS": search_terms_str,
             },
         )
 
@@ -299,15 +300,24 @@ def handler(event, context):
             s3.NotificationKeyFilter(suffix=".json"),
         )
 
-        # EventBridgeルールの作成（毎日実行）
-        rule = events.Rule(
-            self,
-            "DailyPubmedSearchRule",
-            schedule=events.Schedule.cron(
-                minute="5",
-                hour="0",  # UTC 0:05 (JST 9:05)
-            ),
-        )
+        # 各検索語ごとにEventBridgeルールを作成
+        for i, term in enumerate(search_terms):
+            rule = events.Rule(
+                self,
+                f"DailyPubmedSearchRule{i}",
+                schedule=events.Schedule.cron(
+                    minute="5",
+                    hour=f"{i % 24}",
+                ),
+            )
+
+            # Lambdaの入力パラメータを設定
+            rule.add_target(
+                targets.LambdaFunction(
+                    fetch_lambda,
+                    event=events.RuleTargetInput.from_object({"search_term": term}),
+                )
+            )
 
         # Lambda関数をターゲットとして追加
         rule.add_target(targets.LambdaFunction(fetch_lambda))
