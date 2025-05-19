@@ -13,9 +13,7 @@ load_dotenv(override=True)
 required_env_vars = ["BUCKET_NAME", "OPENAI_API_KEY"]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 if missing_vars:
-    raise ValueError(
-        f"Required environment variables are missing: {', '.join(missing_vars)}"
-    )
+    raise ValueError(f"Required environment variables are missing: {', '.join(missing_vars)}")
 
 app = cdk.App()
 
