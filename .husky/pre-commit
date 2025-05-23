@@ -3,12 +3,10 @@
 
 # ファイルを自動フォーマット
 echo "🔍 Auto-formatting Python code..."
-python -m black . || { echo "❌ Black formatting failed"; exit 1; }
-python -m isort . || { echo "❌ Import sorting failed"; exit 1; }
-python -m ruff check --fix . || { echo "❌ Ruff auto-fix failed"; exit 1; }
-python -m ruff format . || { echo "❌ Ruff format failed"; exit 1; }
+python -m black . --line-length 100 || { echo "❌ Black formatting failed"; exit 1; }
+python -m isort . --profile black --line-length 100 || { echo "❌ Import sorting failed"; exit 1; }
 
-# コード品質チェック (修正後に再チェック)
+# コード品質チェック
 echo "🔍 Running Python code quality checks..."
 python -m ruff check . || { echo "❌ Ruff check failed"; exit 1; }
 python -m mypy . || { echo "❌ Type check failed"; exit 1; }

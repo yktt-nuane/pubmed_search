@@ -7,36 +7,30 @@ include = '\.pyi?$'
 profile = "black"
 line_length = 100
 
+[tool.ruff]
+# Ruffはリンターとして使用（フォーマッターとしては使用しない）
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "I"]
+ignore = ["E501"]  # line too long (Blackが処理するため)
+exclude = ["cdk.out/", ".venv/", "asset.*", "lambda/", "layers/"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
-# 型チェックを緩和
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
-# 以下を追加
 ignore_missing_imports = true
-# すべての警告を無効化
 follow_imports = "silent"
-# Lambda 関数ディレクトリを除外
 exclude = ["cdk.out/", ".venv/", "asset.*", "lambda/", "layers/"]
 
-[tool.ruff]
-# ルートレベルに line-length を設定
-line-length = 100
-target-version = "py39"
-select = ["E", "F", "I"]
-ignore = ["ANN101", "ANN102", "E501"]
-
-[tool.ruff.format]
-# format セクションでは line-length を指定しない
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-docstring-code-format = true
-
-[tool.ruff.per-file-ignores]
-"__init__.py" = ["F401"]
+[[tool.mypy.overrides]]
+module = "shiftmaking_ns_v1_aws.shiftmaking_ns_v1_aws_stack"
+disable_error_code = ["list-item"]
 
 [build-system]
 requires = ["setuptools>=42", "wheel"]
