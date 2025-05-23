@@ -103,7 +103,7 @@ def analyze_weekly_important_articles(
     articles_data: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    GPT APIを使用して、週次の重要論文を抽出・分析
+    GPT APIを使用して、週次の最重要論文を2-3件厳選
     """
     # 論文を複数のチャンクに分割
     article_chunks = chunk_articles(articles_data)
@@ -146,7 +146,7 @@ def analyze_weekly_important_articles(
             print(f"Error processing chunk {i+1}: {str(e)}")
             continue
 
-    # 全チャンクの結果から最も重要な論文を選定（最大10件）
+    # 全チャンクの結果から最も重要な論文を2-3件厳選
     if all_important_articles:
         # 重要度スコアでソート（週次レポートとしての価値を評価）
         final_prompt = create_final_selection_prompt(all_important_articles)
@@ -165,45 +165,54 @@ def analyze_weekly_important_articles(
                 content = json_match.group(1)
 
             final_selection = json.loads(content)
-            return final_selection[:10]  # 最大10件に制限
+            # 最大3件に制限（通常は2-3件が選定される）
+            return final_selection[:3]
 
         except Exception as e:
             print(f"Error in final selection: {str(e)}")
-            # エラーの場合は最初の10件を返す
-            return all_important_articles[:10]
+            # エラーの場合は最初の3件を返す
+            return all_important_articles[:3]
 
     return []
 
 
 def create_weekly_analysis_prompt(articles_data: List[Dict[str, Any]]) -> str:
     """
-    週次重要論文分析用のプロンプトを生成
+    週次最重要論文分析用のプロンプトを生成（2-3件厳選版）
     """
     articles_json = json.dumps(articles_data, ensure_ascii=False)
 
     return f"""
-あなたは医学研究の専門家です。提供された論文データから、今週の最も重要な論文を選定し、週次レポートを作成してください。
+あなたは医学研究の専門家です。提供された論文データから、今週の最も重要な論文を2-3件のみ厳選してください。
 
 ## 分析対象の論文データ
 {articles_json}
 
-## 選定基準
-1. 以下の観点から論文の重要性を評価してください：
-   - 臨床実践への影響度（即座に実践に影響を与える可能性）
-   - 科学的新規性（新しい発見、概念、メカニズムの解明）
-   - インパクトファクターとジャーナルの評価
-   - 研究デザインの質（RCT、大規模コホート研究、高品質メタ分析を重視）
-   - 医療現場での議論を呼ぶ可能性
-   - ガイドライン改訂につながる可能性
+## 厳選基準（優先順位順）
+1. **臨床実践への即時影響度**
+   - 現在の標準治療を変更する可能性がある
+   - 患者アウトカムを大きく改善する可能性がある
+   - 臨床ガイドラインの改訂につながる可能性が高い
 
-2. 各論文について以下を評価・記載してください：
-   - なぜこの論文が今週の重要論文として選定されたか
-   - 主要な発見と結論の要約
-   - 臨床実践への具体的な影響
-   - 今後の研究や実践への示唆
-   - 議論すべきポイントや限界
+2. **科学的ブレークスルー**
+   - 病態生理の理解を根本的に変える発見
+   - 新しい治療ターゲットの同定
+   - 既存の常識を覆す知見
 
-3. 論文間の関連性がある場合は、それも指摘してください。
+3. **研究の質と信頼性**
+   - 大規模無作為化比較試験（RCT）
+   - 高品質なメタアナリシス
+   - トップジャーナル（NEJM, Lancet, JAMA, Nature Medicine等）への掲載
+
+4. **社会的インパクト**
+   - 医療政策に影響を与える可能性
+   - 医療経済的に大きな影響がある
+   - 多くの患者に影響を与える
+
+## 重要な注意事項
+- 必ず2-3件のみを選定してください。無理に数を増やさないでください。
+- 本当に週次レポートで取り上げる価値がある論文のみを選定してください。
+- 「良い論文」ではなく「今週最も重要な論文」を選んでください。
 
 以下のJSON形式で返答してください（最も重要な論文から順に）:
 [
@@ -212,40 +221,44 @@ def create_weekly_analysis_prompt(articles_data: List[Dict[str, Any]]) -> str:
     "journal": "ジャーナル名",
     "publication_year": "出版年",
     "title": "論文のタイトル",
-    "weekly_importance_reason": "今週の重要論文として選定した理由",
-    "key_findings": "主要な発見（箇条書きで3-5点）",
-    "clinical_impact": "臨床実践への影響",
-    "future_implications": "今後の研究・実践への示唆",
-    "discussion_points": "議論すべきポイント",
+    "weekly_importance_reason": "なぜこれが今週の最重要論文なのか（具体的に）",
+    "key_findings": "主要な発見（最も重要な3点のみ）",
+    "clinical_impact": "臨床実践への具体的な影響（どう変わるか）",
+    "paradigm_shift": "この論文がもたらすパラダイムシフト（もしあれば）",
+    "immediate_action": "医療従事者が今すぐ知るべきこと・取るべき行動",
     "related_articles": ["関連する他の論文のPMID（もしあれば）"]
   }}
 ]
 
-重要性の高い論文のみを選定してください。品質重視で、無理に数を増やす必要はありません。
+選定できる論文が2-3件に満たない場合は、無理に選ばず、本当に重要な論文のみを返してください。
 """
 
 
 def create_final_selection_prompt(articles_data: List[Dict[str, Any]]) -> str:
     """
-    最終選定用のプロンプトを生成
+    最終選定用のプロンプトを生成（2-3件厳選版）
     """
     articles_json = json.dumps(articles_data, ensure_ascii=False)
 
     return f"""
-あなたは医学研究の専門家です。以下の論文リストから、今週の週次レポートに含めるべき最も重要な論文を最大10件選定してください。
+あなたは医学研究の専門家です。以下の候補論文から、今週の週次レポートに絶対に含めるべき最重要論文を2-3件のみ厳選してください。
 
 ## 候補論文
 {articles_json}
 
 ## 最終選定基準
-1. 週次レポートとしての価値を最優先に考慮
-2. 読者（医療従事者）にとっての実用性と関心度
-3. トピックの多様性（同じような内容の論文は最も重要な1つに絞る）
-4. 最新の医療トレンドとの関連性
-5. エビデンスレベルと研究の質
+1. **週次レポートの価値**: 医療従事者が「これは見逃せない」と感じる論文
+2. **実践的影響度**: 明日からの臨床実践に影響を与える可能性
+3. **独自性**: 他の論文では得られない新しい知見
+4. **緊急性**: 今すぐ知るべき情報か
 
-選定した論文を重要度順に並べ、元のデータ構造を保持したまま返してください。
-必要に応じて、weekly_importance_reasonを更新して、なぜこの論文が週次レポートに含まれるべきかを明確にしてください。
+## 厳選のポイント
+- 似たようなトピックの論文がある場合は、最も影響力の大きい1つだけを選ぶ
+- 「興味深い」だけでは不十分。「重要」かつ「実践的」である必要がある
+- 2-3件に絞ることで、本当に重要な情報だけを伝える
+
+選定した2-3件の論文を重要度順に並べ、元のデータ構造を保持したまま返してください。
+必要に応じて、weekly_importance_reasonを更新して、なぜこの論文が週次レポートのトップ2-3に入るべきかを明確にしてください。
 
 JSON形式で、選定した論文のリストを返してください。
 """
@@ -302,7 +315,7 @@ def lambda_handler(event, context):
             print("No articles found in the analysis files. Exiting.")
             return {"statusCode": 200, "message": "No articles found"}
 
-        # 週次の重要論文を分析・選定
+        # 週次の最重要論文を分析・選定（2-3件厳選）
         weekly_important_articles = analyze_weekly_important_articles(all_articles)
 
         if not weekly_important_articles:
@@ -319,16 +332,17 @@ def lambda_handler(event, context):
                 "files_analyzed": len(analysis_files),
                 "total_articles_reviewed": len(all_articles),
                 "articles_selected": len(weekly_important_articles),
-                "report_type": "weekly_important_articles",
+                "report_type": "weekly_critical_articles",
+                "selection_criteria": "top_2_3_most_impactful",
             },
             "weekly_highlights": {
-                "summary": f"今週は{len(all_articles)}件の論文から{len(weekly_important_articles)}件の重要論文を選定しました。",
+                "summary": f"今週は{len(all_articles)}件の論文から最も重要な{len(weekly_important_articles)}件を厳選しました。",
+                "selection_rationale": "臨床実践への即時影響度、科学的ブレークスルー、研究の質を基準に選定",
                 "top_journals": list(
                     set([article.get("journal", "") for article in weekly_important_articles])
                 ),
-                "key_topics": [],  # GPTの分析結果から抽出することも可能
             },
-            "important_articles": weekly_important_articles,
+            "critical_articles": weekly_important_articles,
         }
 
         # 結果をS3に保存（検索語をファイル名に含める）
@@ -337,9 +351,9 @@ def lambda_handler(event, context):
         safe_term = ""
         if search_term:
             safe_term = search_term.lower().replace(" ", "_").replace("/", "_").replace("\\", "_")
-            output_key = f"weekly_analysis_{safe_term}_{date_str}.json"
+            output_key = f"weekly_critical_{safe_term}_{date_str}.json"
         else:
-            output_key = f"weekly_analysis_{date_str}.json"
+            output_key = f"weekly_critical_{date_str}.json"
 
         s3.put_object(
             Bucket=bucket_name,
@@ -348,11 +362,11 @@ def lambda_handler(event, context):
             ContentType="application/json",
         )
 
-        print(f"Weekly analysis report saved to s3://{bucket_name}/{output_key}")
+        print(f"Weekly critical articles report saved to s3://{bucket_name}/{output_key}")
 
         return {
             "statusCode": 200,
-            "message": "Weekly analysis completed successfully",
+            "message": "Weekly critical articles analysis completed successfully",
             "search_term": search_term or "all",
             "output_file": output_key,
             "articles_selected": len(weekly_important_articles),
