@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11-blue)
 ![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4-green)
 
-PubMed APIを使用して敗血症（sepsis）および急性呼吸窮迫症候群（ARDS）に関連する最新の学術論文を自動取得し、OpenAI GPTモデルによる分析、エビデンス抽出、日本語翻訳までを行うサーバーレスパイプラインです。AWSのサービスを活用し、完全自動化された医学文献処理システムを提供します。
+PubMed APIを使用して敗血症（sepsis）および急性呼吸窮迫症候群（ARDS）に関連する最新の学術論文を自動取得し、OpenAI GPTモデルによる分析、週次重要論文レポート作成、日本語翻訳までを行うサーバーレスパイプラインです。AWSのサービスを活用し、完全自動化された医学文献処理システムを提供します。
 
 ## 📋 特徴
 
@@ -13,7 +13,7 @@ PubMed APIを使用して敗血症（sepsis）および急性呼吸窮迫症候�
 - **自動論文収集**: PubMedから最新論文を毎日自動取得
 - **AI分析**: OpenAI GPTを使用した論文の重要度評価と要約
 - **日本語翻訳**: 分析結果の自動日本語翻訳
-- **エビデンス抽出**: 指定された臨床的クエスチョン（CQ）に関連するエビデンスを週次で抽出
+- **週次重要論文分析**: 週ごとに最も重要な論文を選定し、詳細な分析レポートを作成
 - **AWSサーバーレス**: EventBridge、Lambda、S3、Step Functionsによる堅牢な構成
 
 ## 🏗️ アーキテクチャ
@@ -38,8 +38,8 @@ PubMed APIを使用して敗血症（sepsis）および急性呼吸窮迫症候�
           │
           ▼
 ┌─────────────┐           ┌─────────────┐
-│  週次エビデンス│           │             │
-│  抽出Lambda   │─────────▶│    S3       │
+│  週次分析    │           │             │
+│  Lambda      │─────────▶│    S3       │
 └─────────────┘           │  Bucket     │
                           └─────────────┘
 ```
@@ -56,8 +56,8 @@ project/
 │   └── analyze_function.py  # GPTによる論文分析機能
 ├── translate_lambda/        # 日本語翻訳用Lambda
 │   └── translate_function.py# 分析結果の日本語翻訳
-├── weekly_evidence_lambda/  # 週次エビデンス抽出用Lambda
-│   └── weekly_evidence_function.py # CQに関するエビデンス抽出
+├── weekly_analyze_lambda/   # 週次分析用Lambda
+│   └── weekly_analyze_function.py # 週次重要論文の選定・分析
 ├── layers/                  # Lambda Layers
 │   └── openai/              # OpenAI APIクライアント用レイヤー
 ├── pubmed_search/           # CDKスタック定義
@@ -87,16 +87,17 @@ project/
 - 医学用語の適切な翻訳を実施
 - 元の英語表現も括弧内に保持
 
-### 4. 週次エビデンス抽出機能 (`weekly_evidence_function.py`)
-- 各疾患に対して個別に週次エビデンス抽出を実行
-- 疾患別のファイル名で結果を保存
-- 4つの敗血症関連CQに関するエビデンスを抽出
-  - CQ4-1: 敗血症に対する PMX-DHP
-  - CQ4-2: 敗血症性AKIに対する早期腎代替療法
-  - CQ4-3: 敗血症性AKIに対する持続的腎代替療法
-  - CQ4-4: 敗血症性AKIにおける血液浄化量の増加
-- 毎週月曜日に過去1週間分の論文からエビデンスを抽出
-- エビデンスの価値評価を含む詳細なレポートを生成
+### 4. 週次重要論文分析機能 (`weekly_analyze_function.py`)
+- 毎週月曜日に過去1週間分の論文から最重要論文を選定
+- 以下の観点から総合的に評価：
+  - 臨床実践への即座の影響度
+  - 科学的新規性と発見の重要性
+  - ジャーナルのインパクトファクター
+  - 研究デザインの質（RCT、大規模研究を重視）
+  - ガイドライン改訂の可能性
+  - 医療現場での議論を呼ぶ可能性
+- 最大10件の重要論文を選定し、詳細な分析レポートを生成
+- 論文間の関連性も分析
 
 ## 🚀 セットアップ方法
 
@@ -161,12 +162,13 @@ cdk deploy
    - 翻訳Lambdaが分析結果を日本語に翻訳
    - すべての処理結果がS3に保存
 
-2. **エビデンス抽出フロー（毎週月曜実行）**:
+2. **週次分析フロー（毎週月曜実行）**:
    - EventBridgeによって毎週月曜日に起動
      - sepsis: UTC 1:00（JST 10:00）
      - ARDS: UTC 1:15（JST 10:15）
-   - 過去1週間分の分析済み論文から対象疾患に関連するエビデンスを抽出
-   - エビデンスレポートがS3に保存（疾患名をファイル名に含む、関連論文がある場合のみ）
+   - 過去1週間分の分析済み論文から最重要論文を選定
+   - 臨床的影響度、科学的新規性、研究の質を総合評価
+   - 分析レポートがS3に保存（疾患名をファイル名に含む）
 
 ## 📊 出力ファイル形式
 
@@ -263,37 +265,44 @@ pubmed_ards_YYYYMMDD_jp_analysis.json
 }
 ```
 
-### 4. 週次エビデンス抽出結果
+### 4. 週次重要論文分析結果
 ```
-weekly_evidence_sepsis_YYYYMMDD.json
-weekly_evidence_ards_YYYYMMDD.json
+weekly_analysis_sepsis_YYYYMMDD.json
+weekly_analysis_ards_YYYYMMDD.json
 ```
 
 ```json
 {
   "metadata": {
-    "search_term": "sepsis", // または "ards"
     "generated_date": "2025-03-24T01:00:00Z",
     "period_start": "2025-03-17",
     "period_end": "2025-03-24",
+    "search_term": "sepsis", // または "ards"
     "files_analyzed": 7,
-    "articles_analyzed": 21
+    "total_articles_reviewed": 21,
+    "articles_selected": 8,
+    "report_type": "weekly_important_articles"
   },
-  "evidence_articles": {
-    "CQ4-1": [
-      {
-        "pmid": "12345678",
-        "journal": "Critical Care Medicine",
-        "publication_year": "2025",
-        "title": "論文タイトル",
-        "summary": "論文の簡潔な要約",
-        "evidence_value": "この論文がCQに対するエビデンスとしての価値についての説明"
-      }
-    ],
-    "CQ4-2": [],
-    "CQ4-3": [...],
-    "CQ4-4": [...]
-  }
+  "weekly_highlights": {
+    "summary": "今週は21件の論文から8件の重要論文を選定しました。",
+    "top_journals": ["NEJM", "Lancet", "JAMA"],
+    "key_topics": []
+  },
+  "important_articles": [
+    {
+      "pmid": "12345678",
+      "journal": "New England Journal of Medicine",
+      "publication_year": "2025",
+      "title": "論文タイトル",
+      "weekly_importance_reason": "今週の重要論文として選定した理由",
+      "key_findings": "主要な発見（箇条書きで3-5点）",
+      "clinical_impact": "臨床実践への影響",
+      "future_implications": "今後の研究・実践への示唆",
+      "discussion_points": "議論すべきポイント",
+      "related_articles": ["関連する他の論文のPMID"]
+    },
+    // ... 他の重要論文（最大10件）
+  ]
 }
 ```
 
@@ -341,7 +350,7 @@ cdk synth  # CloudFormationテンプレートの生成
 `pubmed_search_stack.py`に新しい疾患用のEventBridgeルールを追加：
 
 ```python
-# 新疾患用のEventBridgeルール
+# 新疾患用のEventBridgeルール（毎日実行）
 new_disease_rule = events.Rule(
     self,
     "DailyNewDiseaseSearchRule",
@@ -356,20 +365,29 @@ new_disease_rule.add_target(targets.LambdaFunction(
     fetch_lambda,
     event=events.RuleTargetInput.from_object({"search_term": "new_disease_name"})
 ))
+
+# 週次分析用EventBridgeルール（新疾患用）
+weekly_new_disease_rule = events.Rule(
+    self,
+    "WeeklyNewDiseaseAnalysisRule",
+    schedule=events.Schedule.cron(
+        minute="30",  # 時間をずらす
+        hour="1",
+        week_day="MON",
+    ),
+)
+
+# 新疾患用のルールにLambda関数をターゲットとして追加
+weekly_new_disease_rule.add_target(
+    targets.LambdaFunction(
+        weekly_analyze_lambda,
+        event=events.RuleTargetInput.from_object({"search_term": "new_disease_name"})
+    )
+)
 ```
 
-### 対象CQの追加/変更
-`weekly_evidence_lambda/weekly_evidence_function.py`内の`CQ_LIST`配列を編集して再デプロイ：
-```python
-CQ_LIST = [
-    {
-        "id": "新しいCQ-ID",
-        "question": "新しい臨床的質問",
-        "keywords": ["キーワード1", "キーワード2"]
-    },
-    # ... 他のCQ
-]
-```
+### 週次分析の評価基準カスタマイズ
+`weekly_analyze_lambda/weekly_analyze_function.py`内の`create_weekly_analysis_prompt`関数を編集して、評価基準を調整できます。
 
 ## 📄 ライセンス
 
