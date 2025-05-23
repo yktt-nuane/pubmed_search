@@ -322,10 +322,10 @@ def handler(event, context):
         # Lambda関数をターゲットとして追加
         rule.add_target(targets.LambdaFunction(fetch_lambda))
 
-        # 週次エビデンス抽出用Lambda実行ロール
+        # 週次分析用Lambda実行ロール
         weekly_lambda_role = iam.Role(
             self,
-            "WeeklyEvidenceLambdaRole",
+            "WeeklyAnalyzeLambdaRole",
             assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
         )
 
@@ -348,13 +348,13 @@ def handler(event, context):
             )
         )
 
-        # 週次エビデンス抽出用Lambda関数
-        weekly_evidence_lambda = _lambda.Function(
+        # 週次分析用Lambda関数
+        weekly_analyze_lambda = _lambda.Function(
             self,
-            "WeeklyEvidenceFunction",
+            "WeeklyAnalyzeFunction",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="weekly_evidence_function.lambda_handler",
-            code=_lambda.Code.from_asset("weekly_evidence_lambda"),
+            handler="weekly_analyze_function.lambda_handler",
+            code=_lambda.Code.from_asset("weekly_analyze_lambda"),
             role=weekly_lambda_role,
             timeout=Duration.seconds(300),
             memory_size=1024,
@@ -366,7 +366,6 @@ def handler(event, context):
             },
         )
 
-        # 週次実行用EventBridgeルール（毎週月曜日10時に実行）
         # セプシス用のEventBridgeルール（毎日実行）
         sepsis_rule = events.Rule(
             self,
@@ -403,10 +402,10 @@ def handler(event, context):
             )
         )
 
-        # 週次エビデンス抽出用EventBridgeルール（セプシス用）
+        # 週次分析用EventBridgeルール（セプシス用）
         weekly_sepsis_rule = events.Rule(
             self,
-            "WeeklySepsisEvidenceRule",
+            "WeeklySepsisAnalysisRule",
             schedule=events.Schedule.cron(
                 minute="0",
                 hour="1",
@@ -417,15 +416,15 @@ def handler(event, context):
         # セプシス用のルールにLambda関数をターゲットとして追加
         weekly_sepsis_rule.add_target(
             targets.LambdaFunction(
-                weekly_evidence_lambda,
+                weekly_analyze_lambda,
                 event=events.RuleTargetInput.from_object({"search_term": "sepsis"}),
             )
         )
 
-        # 週次エビデンス抽出用EventBridgeルール（ARDS用）
+        # 週次分析用EventBridgeルール（ARDS用）
         weekly_ards_rule = events.Rule(
             self,
-            "WeeklyArdsEvidenceRule",
+            "WeeklyArdsAnalysisRule",
             schedule=events.Schedule.cron(
                 minute="15",  # 15分ずらす
                 hour="1",
@@ -436,7 +435,7 @@ def handler(event, context):
         # ARDS用のルールにLambda関数をターゲットとして追加
         weekly_ards_rule.add_target(
             targets.LambdaFunction(
-                weekly_evidence_lambda,
+                weekly_analyze_lambda,
                 event=events.RuleTargetInput.from_object({"search_term": "ards"}),
             )
         )
