@@ -19,8 +19,9 @@ class PubmedSearchStack(Stack):
         bucket_name = self.node.try_get_context("bucket_name")
         openai_api_key = self.node.try_get_context("openai_api_key")
         gpt_model = self.node.try_get_context("gpt_model")
-        search_terms_str = self.node.try_get_context("search_terms") or "sepsis,ards"
-        search_terms = [term.strip() for term in search_terms_str.split(",")]
+
+        # 検索語を小文字で統一して定義
+        search_terms = ["sepsis", "ards"]
 
         # S3バケットの作成
         bucket = s3.Bucket(
@@ -88,7 +89,7 @@ class PubmedSearchStack(Stack):
             layers=[request_layer],
             environment={
                 "BUCKET_NAME": bucket_name,
-                "SEARCH_TERMS": search_terms_str,
+                "SEARCH_TERMS": ",".join(search_terms),  # 小文字で統一
             },
         )
 
@@ -286,7 +287,7 @@ def handler(event, context):
             """
             ),
             timeout=Duration.seconds(30),
-            role=s3_trigger_lambda_role,  # ここで先に作成したロールを指定
+            role=s3_trigger_lambda_role,
             environment={"STATE_MACHINE_ARN": state_machine.state_machine_arn},
         )
 
@@ -299,28 +300,6 @@ def handler(event, context):
             s3n.LambdaDestination(s3_trigger_lambda),
             s3.NotificationKeyFilter(suffix=".json"),
         )
-
-        # 各検索語ごとにEventBridgeルールを作成
-        for i, term in enumerate(search_terms):
-            rule = events.Rule(
-                self,
-                f"DailyPubmedSearchRule{i}",
-                schedule=events.Schedule.cron(
-                    minute="5",
-                    hour=f"{i % 24}",
-                ),
-            )
-
-            # Lambdaの入力パラメータを設定
-            rule.add_target(
-                targets.LambdaFunction(
-                    fetch_lambda,
-                    event=events.RuleTargetInput.from_object({"search_term": term}),
-                )
-            )
-
-        # Lambda関数をターゲットとして追加
-        rule.add_target(targets.LambdaFunction(fetch_lambda))
 
         # 週次分析用Lambda実行ロール
         weekly_lambda_role = iam.Role(
@@ -384,7 +363,7 @@ def handler(event, context):
             )
         )
 
-        # ARDS用のEventBridgeルール（毎日実行）
+        # ARDS用のEventBridgeルール（毎日実行）- 小文字のardsで統一
         ards_rule = events.Rule(
             self,
             "DailyArdsSearchRule",
@@ -394,7 +373,7 @@ def handler(event, context):
             ),
         )
 
-        # ARDS用のルールにLambda関数をターゲットとして追加
+        # ARDS用のルールにLambda関数をターゲットとして追加（小文字のards）
         ards_rule.add_target(
             targets.LambdaFunction(
                 fetch_lambda,
@@ -421,7 +400,7 @@ def handler(event, context):
             )
         )
 
-        # 週次分析用EventBridgeルール（ARDS用）
+        # 週次分析用EventBridgeルール（ARDS用）- 小文字のardsで統一
         weekly_ards_rule = events.Rule(
             self,
             "WeeklyArdsAnalysisRule",
@@ -432,7 +411,7 @@ def handler(event, context):
             ),
         )
 
-        # ARDS用のルールにLambda関数をターゲットとして追加
+        # ARDS用のルールにLambda関数をターゲットとして追加（小文字のards）
         weekly_ards_rule.add_target(
             targets.LambdaFunction(
                 weekly_analyze_lambda,

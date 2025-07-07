@@ -24,10 +24,11 @@ assert bucket_name is not None, "BUCKET_NAME should not be None at this point"
 
 # コンテキストパラメータの設定
 app.node.set_context("bucket_name", bucket_name.lower())
-app.node.set_context("search_term", os.getenv("SEARCH_TERM", "sepsis"))
-app.node.set_context("search_terms", os.getenv("SEARCH_TERMS", "sepsis,ards"))
 app.node.set_context("openai_api_key", os.getenv("OPENAI_API_KEY"))
 app.node.set_context("gpt_model", os.getenv("GPT_MODEL", "gpt-4"))
+
+# 注意: search_termsはCDKスタック内でハードコード（sepsis, ards）されているため、
+# 環境変数からの設定は不要
 
 PubmedSearchStack(
     app,
